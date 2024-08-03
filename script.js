@@ -5,13 +5,18 @@ let goals = {
     steps: 10000,
     calories: 500,
     water: 8,
-    sleep: 8
+    sleep: 8,
+    activeMinutes: 30
 };
 let rewards = [];
 let weatherData = {};
 let friends = [];
 let challenges = [];
 let predictionModel = null;
+let userProfile = {};
+let wearableDevice = null;
+let coachingTips = [];
+let achievementSystem = new AchievementSystem();
 
 async function loadData() {
     try {
@@ -25,13 +30,17 @@ async function loadData() {
         rewards = JSON.parse(localStorage.getItem('rewards')) || [];
         friends = JSON.parse(localStorage.getItem('friends')) || [];
         challenges = JSON.parse(localStorage.getItem('challenges')) || [];
+        userProfile = JSON.parse(localStorage.getItem('userProfile')) || {};
 
+        await connectWearableDevice();
+        await fetchExternalData();
         updateWeeklyData();
         updateMonthlyData();
         updateDashboard();
         updateRewards();
         updateSocialFeatures();
         await initializePredictionModel();
+        initializeCoachingSystem();
     } catch (error) {
         console.error('Error loading data:', error);
     }
@@ -44,111 +53,97 @@ function saveData() {
         localStorage.setItem('rewards', JSON.stringify(rewards));
         localStorage.setItem('friends', JSON.stringify(friends));
         localStorage.setItem('challenges', JSON.stringify(challenges));
+        localStorage.setItem('userProfile', JSON.stringify(userProfile));
     } catch (error) {
         console.error('Error saving data:', error);
     }
 }
 
 async function trackDaily() {
-    const steps = parseInt(document.getElementById('steps').value, 10);
-    const calories = parseInt(document.getElementById('calories').value, 10);
-    const water = parseInt(document.getElementById('water').value, 10);
-    const sleep = parseInt(document.getElementById('sleep').value, 10);
-    const weight = parseFloat(document.getElementById('weight').value);
-    const mood = parseInt(document.getElementById('mood').value, 10);
-    const activities = document.getElementById('activities').value.split(',').map(a => a.trim());
+    let dailyEntry;
+    if (wearableDevice) {
+        dailyEntry = await getDataFromWearable();
+    } else {
+        dailyEntry = getManualEntryData();
+    }
 
-    if (isNaN(steps) || isNaN(calories) || isNaN(water) || isNaN(sleep) || isNaN(weight) || isNaN(mood) ||
-        steps < 0 || calories < 0 || water < 0 || sleep < 0 || weight < 0 || mood < 0 || mood > 10) {
-        showNotification('Please enter valid numbers for all fields. Ensure values are positive and mood is between 0 and 10.', 'error');
+    if (!dailyEntry) {
+        showNotification('Error getting daily data. Please try again.', 'error');
         return;
     }
 
-    const dailyEntry = { date: new Date(), steps, calories, water, sleep, weight, mood, activities };
-    
+    dailyEntry.date = new Date();
+    await enrichDailyData(dailyEntry);
+    dailyData.push(dailyEntry);
+
+    updateWeeklyData();
+    updateMonthlyData();
+
+    const message = generateDailySummary(dailyEntry);
+    showNotification(message, 'success');
+
+    updateDashboard();
+    updateRewards();
+    updateSocialFeatures();
+    makePredictions();
+    generateCoachingTips();
+    checkAchievements(dailyEntry);
+    saveData();
+}
+
+async function getDataFromWearable() {
     try {
-        await fetchWeatherData();
-        dailyEntry.weather = weatherData;
-
-        dailyData.push(dailyEntry);
-
-        updateWeeklyData();
-        updateMonthlyData();
-
-        const message = `Great job! You've taken ${steps} steps, burned ${calories} calories, drank ${water} glasses of water, slept for ${sleep} hours, weighed ${weight} kg, and your mood is ${mood}/10.`;
-        showNotification(message, 'success');
-
-        updateDashboard();
-        updateRewards();
-        updateSocialFeatures();
-        makePredictions();
-        saveData();
+        const data = await wearableDevice.getDailyData();
+        return {
+            steps: data.steps,
+            calories: data.caloriesBurned,
+            activeMinutes: data.activeMinutes,
+            sleep: data.sleepHours,
+            heartRate: data.averageHeartRate
+        };
     } catch (error) {
-        showNotification('An error occurred while tracking daily progress.', 'error');
+        console.error('Error getting data from wearable:', error);
+        return null;
     }
 }
 
-function updateWeeklyData() {
-    const today = new Date();
-    const oneWeekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-    weeklyData = dailyData.filter(entry => entry.date >= oneWeekAgo);
+function getManualEntryData() {
+    const steps = parseInt(document.getElementById('steps').value);
+    const calories = parseInt(document.getElementById('calories').value);
+    const water = parseInt(document.getElementById('water').value);
+    const sleep = parseInt(document.getElementById('sleep').value);
+    const weight = parseFloat(document.getElementById('weight').value);
+    const mood = parseInt(document.getElementById('mood').value);
+    const activities = document.getElementById('activities').value.split(',').map(a => a.trim());
+    const activeMinutes = parseInt(document.getElementById('activeMinutes').value);
 
-    const weeklySummary = calculateSummary(weeklyData);
-    document.getElementById('weekly-summary').innerHTML = formatSummary(weeklySummary);
+    if ([steps, calories, water, sleep, weight, mood, activeMinutes].some(isNaN)) {
+        showNotification('Please enter valid numbers for all fields.', 'error');
+        return null;
+    }
 
-    updateWeeklyChart();
+    return { steps, calories, water, sleep, weight, mood, activities, activeMinutes };
 }
 
-function updateMonthlyData() {
-    const today = new Date();
-    const oneMonthAgo = new Date(today.getFullYear(), today.getMonth() - 1, today.getDate());
-    monthlyData = dailyData.filter(entry => entry.date >= oneMonthAgo);
-
-    const monthlySummary = calculateSummary(monthlyData);
-    document.getElementById('monthly-summary').innerHTML = formatSummary(monthlySummary);
-
-    updateMonthlyChart();
+async function enrichDailyData(dailyEntry) {
+    dailyEntry.weather = await fetchWeatherData();
+    dailyEntry.stress = await estimateStressLevel(dailyEntry);
 }
 
-function calculateSummary(data) {
-    return data.reduce((acc, entry) => {
-        acc.steps += entry.steps;
-        acc.calories += entry.calories;
-        acc.water += entry.water;
-        acc.sleep += entry.sleep;
-        acc.weight = entry.weight; 
-        acc.mood += entry.mood;
-        return acc;
-    }, { steps: 0, calories: 0, water: 0, sleep: 0, weight: 0, mood: 0 });
+async function estimateStressLevel(dailyEntry) {
+    const stressFactors = {
+        sleep: dailyEntry.sleep < 7 ? (7 - dailyEntry.sleep) * 10 : 0,
+        activity: dailyEntry.activeMinutes < 30 ? (30 - dailyEntry.activeMinutes) * 2 : 0,
+        weather: dailyEntry.weather.main === 'Rain' || dailyEntry.weather.main === 'Snow' ? 10 : 0
+    };
+
+    return Math.min(100, Object.values(stressFactors).reduce((a, b) => a + b, 0));
 }
 
-function formatSummary(summary) {
-    const days = weeklyData.length;
-    const streaks = calculateStreaks();
-    const bmi = calculateBMI(summary.weight, 170); 
-    return `
-        <p>Total Steps: ${summary.steps} (${(summary.steps / goals.steps / days * 100).toFixed(2)}% of goal)</p>
-        <p>Total Calories Burned: ${summary.calories} (${(summary.calories / goals.calories / days * 100).toFixed(2)}% of goal)</p>
-        <p>Total Water Consumed: ${summary.water} glasses (${(summary.water / goals.water / days * 100).toFixed(2)}% of goal)</p>
-        <p>Average Sleep: ${(summary.sleep / days).toFixed(2)} hours per day (${(summary.sleep / goals.sleep / days * 100).toFixed(2)}% of goal)</p>
-        <p>Latest Weight: ${summary.weight.toFixed(1)} kg</p>
-        <p>BMI: ${bmi.toFixed(2)} (${getBMICategory(bmi)})</p>
-        <p>Average Mood: ${(summary.mood / days).toFixed(2)}/10</p>
-        <p>Current Streak: ${streaks.currentStreak} days</p>
-        <p>Longest Streak: ${streaks.longestStreak} days</p>
-    `;
-}
-
-function calculateBMI(weight, heightCm) {
-    const heightM = heightCm / 100;
-    return weight / (heightM * heightM);
-}
-
-function getBMICategory(bmi) {
-    if (bmi < 18.5) return 'Underweight';
-    if (bmi < 25) return 'Normal weight';
-    if (bmi < 30) return 'Overweight';
-    return 'Obese';
+function generateDailySummary(dailyEntry) {
+    return `Great job today! You've taken ${dailyEntry.steps} steps, burned ${dailyEntry.calories} calories, ` +
+           `had ${dailyEntry.activeMinutes} active minutes, slept for ${dailyEntry.sleep} hours, ` +
+           `and your mood is ${dailyEntry.mood}/10. Keep up the good work!`;
 }
 
 function updateDashboard() {
@@ -157,10 +152,12 @@ function updateDashboard() {
     updateStreak();
     updateGoalProgress();
     updateRecommendations();
+    updateStressInsights();
+    updateAchievements();
 }
 
 function updateSummary() {
-    const summary = calculateSummary(dailyData.slice(-30)); // Last 30 days
+    const summary = calculateSummary(dailyData.slice(-30));
     const summaryElement = document.getElementById('summary');
     summaryElement.innerHTML = formatSummary(summary);
 }
@@ -188,100 +185,366 @@ function updateGoalProgress() {
     }
 }
 
-function generateRecommendations() {
-    const recommendations = [];
-    const latestEntry = dailyData[dailyData.length - 1];
-
-    if (latestEntry.steps < goals.steps) {
-        recommendations.push(`Try to increase your daily steps. A short walk after dinner can help.`);
-    }
-    if (latestEntry.sleep < goals.sleep) {
-        recommendations.push(`Aim for ${goals.sleep} hours of sleep. Consider setting a consistent bedtime routine.`);
-    }
-    if (latestEntry.water < goals.water) {
-        recommendations.push(`Increase your water intake. Set reminders throughout the day.`);
-    }
-    if (latestEntry.mood < 7) {
-        recommendations.push(`Your mood seems low. Consider engaging in activities you enjoy or talking to a friend.`);
-    }
-
-    return recommendations;
+function updateRecommendations() {
+    const recommendations = generateRecommendations();
+    const recommendationsElement = document.getElementById('recommendations');
+    recommendationsElement.innerHTML = '<h3>Recommendations</h3>';
+    recommendations.forEach(recommendation => {
+        const recommendationElement = document.createElement('p');
+        recommendationElement.textContent = recommendation;
+        recommendationsElement.appendChild(recommendationElement);
+    });
 }
 
-function showNotification(message, type) {
-    const notification = document.getElementById('notification');
-    notification.className = `notification ${type}`;
-    notification.textContent = message;
-    setTimeout(() => notification.textContent = '', 5000);
+function updateStressInsights() {
+    const stressInsightsElement = document.getElementById('stress-insights');
+    const latestEntry = dailyData[dailyData.length - 1];
+    
+    let stressLevel = 'low';
+    if (latestEntry.stress > 60) stressLevel = 'high';
+    else if (latestEntry.stress > 30) stressLevel = 'moderate';
+
+    stressInsightsElement.innerHTML = `
+        <h3>Stress Insights</h3>
+        <p>Your estimated stress level today is ${stressLevel} (${latestEntry.stress}/100).</p>
+        <p>Consider these stress-reduction techniques:</p>
+        <ul>
+            <li>Practice deep breathing exercises</li>
+            <li>Take a short walk in nature</li>
+            <li>Try a quick meditation session</li>
+        </ul>
+    `;
+}
+
+function updateAchievements() {
+    const achievementsElement = document.getElementById('achievements');
+    achievementsElement.innerHTML = '<h3>Recent Achievements</h3>';
+    
+    const recentAchievements = achievementSystem.getRecentAchievements();
+    recentAchievements.forEach(achievement => {
+        const achievementElement = document.createElement('div');
+        achievementElement.className = 'achievement';
+        achievementElement.innerHTML = `
+            <img src="${achievement.icon}" alt="${achievement.title}">
+            <div>
+                <h4>${achievement.title}</h4>
+                <p>${achievement.description}</p>
+            </div>
+        `;
+        achievementsElement.appendChild(achievementElement);
+    });
+}
+
+function updateCharts() {
+    createLineChart('steps-chart', 'Steps', dailyData.slice(-30).map(d => d.steps));
+    createLineChart('calories-chart', 'Calories Burned', dailyData.slice(-30).map(d => d.calories));
+    createLineChart('water-chart', 'Water Intake', dailyData.slice(-30).map(d => d.water));
+    createLineChart('sleep-chart', 'Sleep Hours', dailyData.slice(-30).map(d => d.sleep));
+    createLineChart('weight-chart', 'Weight', dailyData.slice(-30).map(d => d.weight));
+    createLineChart('mood-chart', 'Mood', dailyData.slice(-30).map(d => d.mood));
+    createStressChart();
+    createCorrelationChart();
+}
+
+function createLineChart(canvasId, label, data) {
+    const ctx = document.getElementById(canvasId).getContext('2d');
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: dailyData.slice(-30).map(d => d.date.toLocaleDateString()),
+            datasets: [{
+                label: label,
+                data: data,
+                borderColor: getRandomColor(),
+                tension: 0.1
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+}
+
+function createStressChart() {
+    const ctx = document.getElementById('stress-chart').getContext('2d');
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: dailyData.slice(-30).map(d => d.date.toLocaleDateString()),
+            datasets: [{
+                label: 'Stress Level',
+                data: dailyData.slice(-30).map(d => d.stress),
+                borderColor: 'rgb(255, 99, 132)',
+                tension: 0.1
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    max: 100
+                }
+            }
+        }
+    });
+}
+
+function updateSocialFeatures() {
+    displayFriendLeaderboard();
+    displayChallenges();
+}
+
+function displayFriendLeaderboard() {
+    const leaderboard = document.getElementById('friend-leaderboard');
+    leaderboard.innerHTML = '<h3>Friend Leaderboard</h3>';
+
+    friends.forEach(friend => {
+        const friendEntry = document.createElement('div');
+        friendEntry.textContent = `${friend.name}: ${friend.steps} steps`;
+        leaderboard.appendChild(friendEntry);
+    });
+}
+
+function displayChallenges() {
+    const challengesElement = document.getElementById('challenges');
+    challengesElement.innerHTML = '<h3>Active Challenges</h3>';
+
+    challenges.forEach(challenge => {
+        const challengeEntry = document.createElement('div');
+        challengeEntry.textContent = `${challenge.name}: ${challenge.description}`;
+        challengesElement.appendChild(challengeEntry);
+    });
+}
+
+function updateRewards() {
+    const rewardsElement = document.getElementById('rewards');
+    rewardsElement.innerHTML = '<h3>Available Rewards</h3>';
+
+    rewards.forEach(reward => {
+        const rewardEntry = document.createElement('div');
+        rewardEntry.textContent = `${reward.name}: ${reward.description}`;
+        rewardsElement.appendChild(rewardEntry);
+    });
+}
+
+function initializeCoachingSystem() {
+    coachingTips = [
+        { condition: (data) => data.steps < goals.steps, message: "Try to increase your daily steps. A short walk after each meal can help." },
+        { condition: (data) => data.sleep < goals.sleep, message: "Aim for more sleep. Consider setting a consistent bedtime routine." },
+        { condition: (data) => data.water < goals.water, message: "Stay hydrated! Set reminders to drink water throughout the day." },
+        { condition: (data) => data.activeMinutes < goals.activeMinutes, message: "Increase your active minutes. Try a quick HIIT workout or dance session." },
+        { condition: (data) => data.stress > 50, message: "Your stress levels seem high. Practice some relaxation techniques or meditation." }
+    ];
+}
+
+function generateCoachingTips() {
+    const latestData = dailyData[dailyData.length - 1];
+    const applicableTips = coachingTips.filter(tip => tip.condition(latestData));
+    
+    const coachingElement = document.getElementById('coaching-tips');
+    coachingElement.innerHTML = '<h3>Coaching Tips</h3>';
+    applicableTips.forEach(tip => {
+        const tipElement = document.createElement('p');
+        tipElement.textContent = tip.message;
+        coachingElement.appendChild(tipElement);
+    });
+}
+
+class AchievementSystem {
+    constructor() {
+        this.achievements = [
+            { id: 'step_master', title: 'Step Master', description: 'Walk 100,000 steps in a week', icon: 'step_master.png', condition: (data) => data.weeklySteps >= 100000 },
+            { id: 'early_bird', title: 'Early Bird', description: 'Wake up before 6 AM for 5 consecutive days', icon: 'early_bird.png', condition: (data) => data.earlyWakeups >= 5 },
+            { id: 'zen_master', title: 'Zen Master', description: 'Maintain low stress levels for 10 days', icon: 'zen_master.png', condition: (data) => data.lowStressDays >= 10 }
+        ];
+        this.unlockedAchievements = new Set();
+    }
+
+    checkAchievements(data) {
+        this.achievements.forEach(achievement => {
+            if (!this.unlockedAchievements.has(achievement.id) && achievement.condition(data)) {
+                this.unlockAchievement(achievement);
+            }
+        });
+    }
+
+    unlockAchievement(achievement) {
+        this.unlockedAchievements.add(achievement.id);
+        showNotification(`Achievement Unlocked: ${achievement.title}`, 'achievement');
+    }
+
+    getRecentAchievements() {
+        return Array.from(this.unlockedAchievements)
+            .map(id => this.achievements.find(a => a.id === id))
+            .slice(-3);
+    }
+}
+
+function checkAchievements(dailyEntry) {
+    const achievementData = {
+        weeklySteps: weeklyData.reduce((sum, day) => sum + day.steps, 0),
+        earlyWakeups: dailyData.slice(-5).filter(day => new Date(day.date).getHours() < 6).length,
+        lowStressDays: dailyData.slice(-10).filter(day => day.stress < 30).length
+    };
+    achievementSystem.checkAchievements(achievementData);
+}
+
+async function connectWearableDevice() {
+    try {
+        wearableDevice = await mockWearableConnection();
+        showNotification('Wearable device connected successfully!', 'success');
+    } catch (error) {
+        console.error('Error connecting to wearable device:', error);
+        showNotification('Failed to connect to wearable device. Using manual entry.', 'warning');
+    }
+}
+
+function mockWearableConnection() {
+    return new Promise((resolve) => {
+        setTimeout(() => {
+            resolve({
+                getDailyData: () => Promise.resolve({
+                    steps: Math.floor(Math.random() * 10000),
+                    caloriesBurned: Math.floor(Math.random() * 500),
+                    activeMinutes: Math.floor(Math.random() * 60),
+                    sleepHours: 6 + Math.random() * 3,
+                    averageHeartRate: 60 + Math.floor(Math.random() * 40)
+                })
+            });
+        }, 1000);
+    });
 }
 
 async function fetchWeatherData() {
     try {
-        const response = await fetch('https://api.openweathermap.org/data/2.5/weather?q=${city}&units=metric&appid=${apiKey}');
+        const response = await fetch(`https://api.openweathermap.org/data/2.5/weather?q=${userProfile.city}&units=metric&appid=${API_KEY}`);
         const data = await response.json();
-        weatherData = data;
+        return {
+            temperature: data.main.temp,
+            condition: data.weather[0].main,
+            humidity: data.main.humidity
+        };
     } catch (error) {
         console.error('Error fetching weather data:', error);
+        return null;
     }
 }
 
 async function initializePredictionModel() {
     try {
         predictionModel = await tf.loadLayersModel('path/to/model.json');
+        console.log('Prediction model loaded successfully');
     } catch (error) {
-        console.error('Error initializing prediction model:', error);
+        console.error('Error loading prediction model:', error);
     }
 }
 
-async function makePredictions() {
-    if (!predictionModel) return;
-
-    try {
-        const recentEntries = dailyData.slice(-10);
-        const input = tf.tensor2d(recentEntries.map(entry => [entry.steps, entry.calories, entry.water, entry.sleep, entry.weight, entry.mood]));
-        const predictions = predictionModel.predict(input);
-        
-        console.log(predictions);
-    } catch (error) {
-        console.error('Error making predictions:', error);
+function makePredictions() {
+    if (!predictionModel) {
+        console.error('Prediction model not initialized');
+        return;
     }
+
+    const recentData = dailyData.slice(-7);
+    const input = tf.tensor2d(recentData.map(entry => [
+        entry.steps,
+        entry.calories,
+        entry.water,
+        entry.sleep,
+        entry.stress,
+        entry.mood
+    ]));
+
+    const prediction = predictionModel.predict(input);
+    const predictedValues = prediction.dataSync();
+
+    console.log('Predictions for next week:', predictedValues);
+    updatePredictionDisplay(predictedValues);
 }
 
-function updateCharts() {
-    updateWeeklyChart();
-    updateMonthlyChart();
-}
-
-function updateWeeklyChart() {
-    const weeklyLabels = weeklyData.map(entry => entry.date.toDateString());
-    const weeklyStepsData = weeklyData.map(entry => entry.steps);
-    const weeklyCaloriesData = weeklyData.map(entry => entry.calories);
-
-    createLineChart('weekly-chart', weeklyLabels, ['Steps', 'Calories'], [weeklyStepsData, weeklyCaloriesData]);
-}
-
-function updateMonthlyChart() {
-    const monthlyLabels = monthlyData.map(entry => entry.date.toDateString());
-    const monthlyStepsData = monthlyData.map(entry => entry.steps);
-    const monthlyCaloriesData = monthlyData.map(entry => entry.calories);
-
-    createLineChart('monthly-chart', monthlyLabels, ['Steps', 'Calories'], [monthlyStepsData, monthlyCaloriesData]);
-}
-
-function createLineChart(canvasId, labels, datasetsLabels, datasetsData) {
-    const ctx = document.getElementById(canvasId).getContext('2d');
-    new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels,
-            datasets: datasetsLabels.map((label, index) => ({
-                label,
-                data: datasetsData[index],
-                borderColor: getRandomColor(),
-                fill: false
-            }))
-        }
+function updatePredictionDisplay(predictions) {
+    const predictionElement = document.getElementById('predictions');
+    predictionElement.innerHTML = '<h3>Predictions for Next Week</h3>';
+    const metrics = ['Steps', 'Calories', 'Water', 'Sleep', 'Stress', 'Mood'];
+    
+    metrics.forEach((metric, index) => {
+        const predictionItem = document.createElement('p');
+        predictionItem.textContent = `${metric}: ${predictions[index].toFixed(2)}`;
+        predictionElement.appendChild(predictionItem);
     });
+}
+
+function calculateSummary(data) {
+    return data.reduce((acc, entry) => {
+        acc.steps += entry.steps;
+        acc.calories += entry.calories;
+        acc.water += entry.water;
+        acc.sleep += entry.sleep;
+        acc.weight = entry.weight; // Latest weight
+        acc.mood += entry.mood;
+        acc.stress += entry.stress;
+        return acc;
+    }, { steps: 0, calories: 0, water: 0, sleep: 0, weight: 0, mood: 0, stress: 0 });
+}
+
+function formatSummary(summary) {
+    const days = dailyData.length;
+    return `
+        <p>Total Steps: ${summary.steps.toLocaleString()} (Avg: ${(summary.steps / days).toFixed(0)})</p>
+        <p>Total Calories Burned: ${summary.calories.toLocaleString()} (Avg: ${(summary.calories / days).toFixed(0)})</p>
+        <p>Total Water Consumed: ${summary.water} glasses (Avg: ${(summary.water / days).toFixed(1)})</p>
+        <p>Average Sleep: ${(summary.sleep / days).toFixed(2)} hours per day</p>
+        <p>Latest Weight: ${summary.weight.toFixed(1)} kg</p>
+        <p>Average Mood: ${(summary.mood / days).toFixed(2)}/10</p>
+        <p>Average Stress Level: ${(summary.stress / days).toFixed(2)}/100</p>
+    `;
+}
+
+function calculateStreaks() {
+    let currentStreak = 0;
+    let longestStreak = 0;
+    let lastDate = null;
+
+    dailyData.forEach((entry) => {
+        if (lastDate && (entry.date - lastDate) / (1000 * 60 * 60 * 24) === 1) {
+            currentStreak++;
+        } else {
+            currentStreak = 1;
+        }
+        longestStreak = Math.max(longestStreak, currentStreak);
+        lastDate = entry.date;
+    });
+
+    return { currentStreak, longestStreak };
+}
+
+function generateRecommendations() {
+    const latestEntry = dailyData[dailyData.length - 1];
+    const recommendations = [];
+
+    if (latestEntry.steps < goals.steps) {
+        recommendations.push("Try to increase your daily steps. A short walk after dinner can help reach your goal.");
+    }
+    if (latestEntry.sleep < goals.sleep) {
+        recommendations.push("Aim for more sleep. Consider setting a consistent bedtime routine.");
+    }
+    if (latestEntry.water < goals.water) {
+        recommendations.push("Increase your water intake. Set reminders throughout the day to stay hydrated.");
+    }
+    if (latestEntry.activeMinutes < goals.activeMinutes) {
+        recommendations.push("Try to be more active. Even short bursts of activity can help reach your goal.");
+    }
+    if (latestEntry.stress > 50) {
+        recommendations.push("Your stress levels seem high. Consider practicing relaxation techniques or meditation.");
+    }
+
+    return recommendations;
 }
 
 function getRandomColor() {
@@ -293,62 +556,40 @@ function getRandomColor() {
     return color;
 }
 
-function updateSocialFeatures() {
-    displayFriendLeaderboard();
-    displayChallenges();
-}
-
-function displayFriendLeaderboard() {
-    const leaderboard = document.getElementById('friend-leaderboard');
-    leaderboard.innerHTML = '';
-
-    friends.forEach(friend => {
-        const friendEntry = document.createElement('div');
-        friendEntry.textContent = `${friend.name}: ${friend.steps} steps`;
-        leaderboard.appendChild(friendEntry);
-    });
-}
-
-function displayChallenges() {
-    const challengesElement = document.getElementById('challenges');
-    challengesElement.innerHTML = '';
-
-    challenges.forEach(challenge => {
-        const challengeEntry = document.createElement('div');
-        challengeEntry.textContent = `${challenge.name}: ${challenge.description}`;
-        challengesElement.appendChild(challengeEntry);
-    });
-}
-
-function updateRewards() {
-    const rewardsElement = document.getElementById('rewards');
-    rewardsElement.innerHTML = '';
-
-    rewards.forEach(reward => {
-        const rewardEntry = document.createElement('div');
-        rewardEntry.textContent = `${reward.name}: ${reward.description}`;
-        rewardsElement.appendChild(rewardEntry);
-    });
-}
-
-function calculateStreaks() {
-    let currentStreak = 0;
-    let longestStreak = 0;
-
-    dailyData.forEach((entry, index) => {
-        if (index === 0 || entry.date - dailyData[index - 1].date <= 24 * 60 * 60 * 1000) {
-            currentStreak++;
-        } else {
-            currentStreak = 1;
-        }
-        longestStreak = Math.max(longestStreak, currentStreak);
-    });
-
-    return { currentStreak, longestStreak };
+function showNotification(message, type) {
+    const notification = document.getElementById('notification');
+    notification.textContent = message;
+    notification.className = `notification ${type}`;
+    notification.style.display = 'block';
+    setTimeout(() => {
+        notification.style.display = 'none';
+    }, 5000);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
     loadData();
-
     document.getElementById('track-button').addEventListener('click', trackDaily);
+    document.getElementById('update-goals-button').addEventListener('click', updateGoals);
 });
+
+function updateGoals() {
+    const newGoals = {
+        steps: parseInt(document.getElementById('goal-steps').value),
+        calories: parseInt(document.getElementById('goal-calories').value),
+        water: parseInt(document.getElementById('goal-water').value),
+        sleep: parseInt(document.getElementById('goal-sleep').value),
+        activeMinutes: parseInt(document.getElementById('goal-active-minutes').value)
+    };
+
+    if (Object.values(newGoals).some(isNaN)) {
+        showNotification('Please enter valid numbers for all goals.', 'error');
+        return;
+    }
+
+    goals = newGoals;
+    saveData();
+    updateDashboard();
+    showNotification('Goals updated successfully!', 'success');
+}
+
+loadData();
