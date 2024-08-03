@@ -7,7 +7,10 @@ let goals = {
     water: 8,
     sleep: 8
 };
+let rewards = [];
+let weatherData = {};
 
+// Load data from local storage
 function loadData() {
     const storedDailyData = localStorage.getItem('dailyData');
     if (storedDailyData) {
@@ -20,17 +23,25 @@ function loadData() {
         goals = JSON.parse(storedGoals);
     }
 
+    const storedRewards = localStorage.getItem('rewards');
+    if (storedRewards) {
+        rewards = JSON.parse(storedRewards);
+    }
+
     updateWeeklyData();
     updateMonthlyData();
     updateCharts();
+    updateRewards();
 }
 
+// Save data to local storage
 function saveData() {
     localStorage.setItem('dailyData', JSON.stringify(dailyData));
     localStorage.setItem('goals', JSON.stringify(goals));
+    localStorage.setItem('rewards', JSON.stringify(rewards));
 }
 
-function trackDaily() {
+async function trackDaily() {
     const steps = parseInt(document.getElementById('steps').value);
     const calories = parseInt(document.getElementById('calories').value);
     const water = parseInt(document.getElementById('water').value);
@@ -44,6 +55,13 @@ function trackDaily() {
     }
 
     const dailyEntry = { date: new Date(), steps, calories, water, sleep, weight, mood };
+    
+    // Fetch weather data
+    await fetchWeatherData();
+    dailyEntry.weather = weatherData;
+
+
+
     dailyData.push(dailyEntry);
 
     updateWeeklyData();
@@ -53,6 +71,7 @@ function trackDaily() {
     document.getElementById('result').textContent = message;
 
     updateCharts();
+    updateRewards();
     saveData();
 }
 
@@ -92,14 +111,31 @@ function calculateSummary(data) {
 
 function formatSummary(summary) {
     const days = weeklyData.length;
+    const streaks = calculateStreaks();
+    const bmi = calculateBMI(summary.weight, 170); // Assuming height is 170cm
     return `
         <p>Total Steps: ${summary.steps} (${(summary.steps / goals.steps / days * 100).toFixed(2)}% of goal)</p>
         <p>Total Calories Burned: ${summary.calories} (${(summary.calories / goals.calories / days * 100).toFixed(2)}% of goal)</p>
         <p>Total Water Consumed: ${summary.water} glasses (${(summary.water / goals.water / days * 100).toFixed(2)}% of goal)</p>
         <p>Average Sleep: ${(summary.sleep / days).toFixed(2)} hours per day (${(summary.sleep / goals.sleep / days * 100).toFixed(2)}% of goal)</p>
         <p>Latest Weight: ${summary.weight.toFixed(1)} kg</p>
+        <p>BMI: ${bmi.toFixed(2)} (${getBMICategory(bmi)})</p>
         <p>Average Mood: ${(summary.mood / days).toFixed(2)}/10</p>
+        <p>Current Streak: ${streaks.currentStreak} days</p>
+        <p>Longest Streak: ${streaks.longestStreak} days</p>
     `;
+}
+
+function calculateBMI(weight, heightCm) {
+    const heightM = heightCm / 100;
+    return weight / (heightM * heightM);
+}
+
+function getBMICategory(bmi) {
+    if (bmi < 18.5) return 'Underweight';
+    if (bmi < 25) return 'Normal weight';
+    if (bmi < 30) return 'Overweight';
+    return 'Obese';
 }
 
 function updateCharts() {
@@ -111,6 +147,9 @@ function updateCharts() {
         const chart = createChart(metric, dailyData.slice(-7));
         chartsContainer.appendChild(chart);
     });
+
+    // Add correlation chart
+    createCorrelationChart();
 }
 
 function createChart(metric, data) {
@@ -145,6 +184,39 @@ function createChart(metric, data) {
     return chartDiv;
 }
 
+function createCorrelationChart() {
+    const ctx = document.getElementById('correlation-chart').getContext('2d');
+    const moodData = dailyData.map(entry => entry.mood);
+    const sleepData = dailyData.map(entry => entry.sleep);
+
+    new Chart(ctx, {
+        type: 'scatter',
+        data: {
+            datasets: [{
+                label: 'Mood vs Sleep',
+                data: dailyData.map(entry => ({x: entry.sleep, y: entry.mood})),
+                backgroundColor: 'rgba(75, 192, 192, 0.6)'
+            }]
+        },
+        options: {
+            scales: {
+                x: {
+                    title: {
+                        display: true,
+                        text: 'Sleep (hours)'
+                    }
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: 'Mood (1-10)'
+                    }
+                }
+            }
+        }
+    });
+}
+
 function updateWeeklyChart() {
     const ctx = document.getElementById('weekly-chart').getContext('2d');
     new Chart(ctx, {
@@ -176,110 +248,101 @@ function updateMonthlyChart() {
         data: {
             labels: monthlyData.map(entry => entry.date.toLocaleDateString()),
             datasets: [{
-                label: 'Weight',
-                data: monthlyData.map(entry => entry.weight),
-                backgroundColor: 'rgba(255, 99, 132, 0.6)',
-                borderColor: 'rgba(255, 99, 132, 1)',
+                label: 'Calories Burned',
+                data: monthlyData.map(entry => entry.calories),
+                backgroundColor: 'rgba(153, 102, 255, 0.6)',
+                borderColor: 'rgba(153, 102, 255, 1)',
                 borderWidth: 1
             }]
         },
         options: {
             scales: {
                 y: {
-                    beginAtZero: false
+                    beginAtZero: true
                 }
             }
         }
     });
 }
-function setGoals() {
-    goals.steps = parseInt(document.getElementById('goal-steps').value) || goals.steps;
-    goals.calories = parseInt(document.getElementById('goal-calories').value) || goals.calories;
-    goals.water = parseInt(document.getElementById('goal-water').value) || goals.water;
-    goals.sleep = parseInt(document.getElementById('goal-sleep').value) || goals.sleep;
-
-    saveData();
-    updateCharts();
-    updateWeeklyData();
-    updateMonthlyData();
-
-    document.getElementById('result').textContent = 'Goals updated successfully!';
-}
-
-document.querySelectorAll('.tab-btn').forEach(button => {
-    button.addEventListener('click', () => {
-        document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-        button.classList.add('active');
-        
-        document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-        document.getElementById(button.dataset.tab).classList.add('active');
-    });
-});
 
 function calculateStreaks() {
     let currentStreak = 0;
     let longestStreak = 0;
-    let lastDate = null;
+    let previousDate = null;
 
-    dailyData.sort((a, b) => a.date - b.date).forEach(entry => {
-        if (lastDate === null || (entry.date - lastDate) / (1000 * 60 * 60 * 24) === 1) {
-            currentStreak++;
-            if (currentStreak > longestStreak) {
-                longestStreak = currentStreak;
+    dailyData.forEach(entry => {
+        if (previousDate) {
+            const diff = (entry.date - previousDate) / (1000 * 60 * 60 * 24);
+            if (diff === 1) {
+                currentStreak++;
+                if (currentStreak > longestStreak) {
+                    longestStreak = currentStreak;
+                }
+            } else {
+                currentStreak = 1;
             }
         } else {
             currentStreak = 1;
         }
-        lastDate = entry.date;
+        previousDate = entry.date;
     });
 
     return { currentStreak, longestStreak };
 }
 
-function formatSummary(summary) {
-    const days = weeklyData.length;
-    const streaks = calculateStreaks();
-    return `
-        <p>Total Steps: ${summary.steps} (${(summary.steps / goals.steps / days * 100).toFixed(2)}% of goal)</p>
-        <p>Total Calories Burned: ${summary.calories} (${(summary.calories / goals.calories / days * 100).toFixed(2)}% of goal)</p>
-        <p>Total Water Consumed: ${summary.water} glasses (${(summary.water / goals.water / days * 100).toFixed(2)}% of goal)</p>
-        <p>Average Sleep: ${(summary.sleep / days).toFixed(2)} hours per day (${(summary.sleep / goals.sleep / days * 100).toFixed(2)}% of goal)</p>
-        <p>Latest Weight: ${summary.weight.toFixed(1)} kg</p>
-        <p>Average Mood: ${(summary.mood / days).toFixed(2)}/10</p>
-        <p>Current Streak: ${streaks.currentStreak} days</p>
-        <p>Longest Streak: ${streaks.longestStreak} days</p>
-    `;
+function updateGoals() {
+    goals.steps = parseInt(document.getElementById('goal-steps').value);
+    goals.calories = parseInt(document.getElementById('goal-calories').value);
+    goals.water = parseInt(document.getElementById('goal-water').value);
+    goals.sleep = parseInt(document.getElementById('goal-sleep').value);
+    saveData();
+    updateCharts();
 }
 
-function exportData() {
-    const dataStr = JSON.stringify(dailyData);
-    const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
-    const exportFileDefaultName = 'fitness_data.json';
+function updateRewards() {
+    rewards = [];
 
-    const linkElement = document.createElement('a');
-    linkElement.setAttribute('href', dataUri);
-    linkElement.setAttribute('download', exportFileDefaultName);
-    linkElement.click();
+    const totalSteps = dailyData.reduce((sum, entry) => sum + entry.steps, 0);
+    const totalCalories = dailyData.reduce((sum, entry) => sum + entry.calories, 0);
+    const totalWater = dailyData.reduce((sum, entry) => sum + entry.water, 0);
+    const totalSleep = dailyData.reduce((sum, entry) => sum + entry.sleep, 0);
+
+    if (totalSteps >= 70000) {
+        rewards.push('Free Movie Ticket');
+    }
+    if (totalCalories >= 3500) {
+        rewards.push('Free Dessert');
+    }
+    if (totalWater >= 56) {
+        rewards.push('Spa Day');
+    }
+    if (totalSleep >= 56) {
+        rewards.push('New Book');
+    }
+
+    const rewardsContainer = document.getElementById('rewards');
+    rewardsContainer.innerHTML = '';
+    rewards.forEach(reward => {
+        const rewardDiv = document.createElement('div');
+        rewardDiv.className = 'reward';
+        rewardDiv.textContent = reward;
+        rewardsContainer.appendChild(rewardDiv);
+    });
+
+    saveData();
 }
 
-function importData(event) {
-    const file = event.target.files[0];
-    const reader = new FileReader();
-
-    reader.onload = function(e) {
-        const importedData = JSON.parse(e.target.result);
-        dailyData = importedData.map(entry => ({...entry, date: new Date(entry.date)}));
-        saveData();
-        updateWeeklyData();
-        updateMonthlyData();
-        updateCharts();
-        document.getElementById('result').textContent = 'Data imported successfully!';
-    };
-
-    reader.readAsText(file);
+async function fetchWeatherData() {
+    try {
+        const response = await fetch('ttps://api.openweathermap.org/data/2.5/weather?q=${city}&units=metric&appid=${apiKey}');
+        const data = await response.json();
+        weatherData = data.current;
+    } catch (error) {
+        console.error('Error fetching weather data:', error);
+    }
 }
 
-document.getElementById('exportBtn').addEventListener('click', exportData);
-document.getElementById('importBtn').addEventListener('change', importData);
+document.getElementById('track-button').addEventListener('click', trackDaily);
+document.getElementById('update-goals-button').addEventListener('click', updateGoals);
 
 loadData();
