@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fitness Tracker - v2</title>
+    <title>Fitness Tracker</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -13,6 +13,8 @@
             <button class="tab-btn active" data-tab="daily">Daily</button>
             <button class="tab-btn" data-tab="weekly">Weekly</button>
             <button class="tab-btn" data-tab="monthly">Monthly</button>
+            <button id="exportBtn">Export Data</button>
+            <input type="file" id="importBtn" accept=".json">
         </div>
         <div id="daily" class="tab-content active">
             <div class="input-group">
