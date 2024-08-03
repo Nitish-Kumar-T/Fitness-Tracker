@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fitness Tracker - v2</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Fitness Tracker</h1>
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="daily">Daily</button>
+            <button class="tab-btn" data-tab="weekly">Weekly</button>
+            <button class="tab-btn" data-tab="monthly">Monthly</button>
+        </div>
+        <div id="daily" class="tab-content active">
+            <div class="input-group">
+                <label for="steps">Steps:</label>
+                <input type="number" id="steps" placeholder="Enter number of steps">
+            </div>
+            <div class="input-group">
+                <label for="calories">Calories Burned:</label>
+                <input type="number" id="calories" placeholder="Enter calories burned">
+            </div>
+            <div class="input-group">
+                <label for="water">Water (glasses):</label>
+                <input type="number" id="water" placeholder="Enter glasses of water">
+            </div>
+            <div class="input-group">
+                <label for="sleep">Sleep (hours):</label>
+                <input type="number" id="sleep" placeholder="Enter hours of sleep">
+            </div>
+            <button onclick="trackDaily()">Track Daily Progress</button>
+        </div>
+        <div id="weekly" class="tab-content">
+            <h2>Weekly Summary</h2>
+            <div id="weekly-summary"></div>
+        </div>
+        <div id="monthly" class="tab-content">
+            <h2>Monthly Summary</h2>
+            <div id="monthly-summary"></div>
+        </div>
+        <div id="result"></div>
+        <div id="progress-charts"></div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
