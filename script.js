@@ -9,70 +9,83 @@ let goals = {
 };
 let rewards = [];
 let weatherData = {};
+let friends = [];
+let challenges = [];
+let predictionModel = null;
 
-// Load data from local storage
-function loadData() {
-    const storedDailyData = localStorage.getItem('dailyData');
-    if (storedDailyData) {
-        dailyData = JSON.parse(storedDailyData);
-        dailyData.forEach(entry => entry.date = new Date(entry.date));
+async function loadData() {
+    try {
+        const storedDailyData = localStorage.getItem('dailyData');
+        if (storedDailyData) {
+            dailyData = JSON.parse(storedDailyData);
+            dailyData.forEach(entry => entry.date = new Date(entry.date));
+        }
+
+        goals = JSON.parse(localStorage.getItem('goals')) || goals;
+        rewards = JSON.parse(localStorage.getItem('rewards')) || [];
+        friends = JSON.parse(localStorage.getItem('friends')) || [];
+        challenges = JSON.parse(localStorage.getItem('challenges')) || [];
+
+        updateWeeklyData();
+        updateMonthlyData();
+        updateDashboard();
+        updateRewards();
+        updateSocialFeatures();
+        await initializePredictionModel();
+    } catch (error) {
+        console.error('Error loading data:', error);
     }
-
-    const storedGoals = localStorage.getItem('goals');
-    if (storedGoals) {
-        goals = JSON.parse(storedGoals);
-    }
-
-    const storedRewards = localStorage.getItem('rewards');
-    if (storedRewards) {
-        rewards = JSON.parse(storedRewards);
-    }
-
-    updateWeeklyData();
-    updateMonthlyData();
-    updateCharts();
-    updateRewards();
 }
 
-// Save data to local storage
 function saveData() {
-    localStorage.setItem('dailyData', JSON.stringify(dailyData));
-    localStorage.setItem('goals', JSON.stringify(goals));
-    localStorage.setItem('rewards', JSON.stringify(rewards));
+    try {
+        localStorage.setItem('dailyData', JSON.stringify(dailyData));
+        localStorage.setItem('goals', JSON.stringify(goals));
+        localStorage.setItem('rewards', JSON.stringify(rewards));
+        localStorage.setItem('friends', JSON.stringify(friends));
+        localStorage.setItem('challenges', JSON.stringify(challenges));
+    } catch (error) {
+        console.error('Error saving data:', error);
+    }
 }
 
 async function trackDaily() {
-    const steps = parseInt(document.getElementById('steps').value);
-    const calories = parseInt(document.getElementById('calories').value);
-    const water = parseInt(document.getElementById('water').value);
-    const sleep = parseInt(document.getElementById('sleep').value);
+    const steps = parseInt(document.getElementById('steps').value, 10);
+    const calories = parseInt(document.getElementById('calories').value, 10);
+    const water = parseInt(document.getElementById('water').value, 10);
+    const sleep = parseInt(document.getElementById('sleep').value, 10);
     const weight = parseFloat(document.getElementById('weight').value);
-    const mood = parseInt(document.getElementById('mood').value);
+    const mood = parseInt(document.getElementById('mood').value, 10);
+    const activities = document.getElementById('activities').value.split(',').map(a => a.trim());
 
-    if (isNaN(steps) || isNaN(calories) || isNaN(water) || isNaN(sleep) || isNaN(weight) || isNaN(mood)) {
-        document.getElementById('result').textContent = 'Please enter valid numbers for all fields.';
+    if (isNaN(steps) || isNaN(calories) || isNaN(water) || isNaN(sleep) || isNaN(weight) || isNaN(mood) ||
+        steps < 0 || calories < 0 || water < 0 || sleep < 0 || weight < 0 || mood < 0 || mood > 10) {
+        showNotification('Please enter valid numbers for all fields. Ensure values are positive and mood is between 0 and 10.', 'error');
         return;
     }
 
-    const dailyEntry = { date: new Date(), steps, calories, water, sleep, weight, mood };
+    const dailyEntry = { date: new Date(), steps, calories, water, sleep, weight, mood, activities };
     
-    // Fetch weather data
-    await fetchWeatherData();
-    dailyEntry.weather = weatherData;
+    try {
+        await fetchWeatherData();
+        dailyEntry.weather = weatherData;
 
+        dailyData.push(dailyEntry);
 
+        updateWeeklyData();
+        updateMonthlyData();
 
-    dailyData.push(dailyEntry);
+        const message = `Great job! You've taken ${steps} steps, burned ${calories} calories, drank ${water} glasses of water, slept for ${sleep} hours, weighed ${weight} kg, and your mood is ${mood}/10.`;
+        showNotification(message, 'success');
 
-    updateWeeklyData();
-    updateMonthlyData();
-
-    const message = `Great job! You've taken ${steps} steps, burned ${calories} calories, drank ${water} glasses of water, slept for ${sleep} hours, weigh ${weight} kg, and your mood is ${mood}/10.`;
-    document.getElementById('result').textContent = message;
-
-    updateCharts();
-    updateRewards();
-    saveData();
+        updateDashboard();
+        updateRewards();
+        updateSocialFeatures();
+        makePredictions();
+        saveData();
+    } catch (error) {
+        showNotification('An error occurred while tracking daily progress.', 'error');
+    }
 }
 
 function updateWeeklyData() {
@@ -103,7 +116,7 @@ function calculateSummary(data) {
         acc.calories += entry.calories;
         acc.water += entry.water;
         acc.sleep += entry.sleep;
-        acc.weight = entry.weight; // Only keep the latest weight
+        acc.weight = entry.weight; 
         acc.mood += entry.mood;
         return acc;
     }, { steps: 0, calories: 0, water: 0, sleep: 0, weight: 0, mood: 0 });
@@ -112,7 +125,7 @@ function calculateSummary(data) {
 function formatSummary(summary) {
     const days = weeklyData.length;
     const streaks = calculateStreaks();
-    const bmi = calculateBMI(summary.weight, 170); // Assuming height is 170cm
+    const bmi = calculateBMI(summary.weight, 170); 
     return `
         <p>Total Steps: ${summary.steps} (${(summary.steps / goals.steps / days * 100).toFixed(2)}% of goal)</p>
         <p>Total Calories Burned: ${summary.calories} (${(summary.calories / goals.calories / days * 100).toFixed(2)}% of goal)</p>
@@ -138,211 +151,204 @@ function getBMICategory(bmi) {
     return 'Obese';
 }
 
-function updateCharts() {
-    const chartsContainer = document.getElementById('progress-charts');
-    chartsContainer.innerHTML = '';
-
-    const metrics = ['steps', 'calories', 'water', 'sleep', 'weight', 'mood'];
-    metrics.forEach(metric => {
-        const chart = createChart(metric, dailyData.slice(-7));
-        chartsContainer.appendChild(chart);
-    });
-
-    // Add correlation chart
-    createCorrelationChart();
+function updateDashboard() {
+    updateCharts();
+    updateSummary();
+    updateStreak();
+    updateGoalProgress();
+    updateRecommendations();
 }
 
-function createChart(metric, data) {
-    const chartDiv = document.createElement('div');
-    chartDiv.className = 'chart';
+function updateSummary() {
+    const summary = calculateSummary(dailyData.slice(-30)); // Last 30 days
+    const summaryElement = document.getElementById('summary');
+    summaryElement.innerHTML = formatSummary(summary);
+}
 
-    const title = document.createElement('div');
-    title.className = 'chart-title';
-    title.textContent = `${metric.charAt(0).toUpperCase() + metric.slice(1)} - Last 7 Days`;
-    chartDiv.appendChild(title);
+function updateStreak() {
+    const streaks = calculateStreaks();
+    const streakElement = document.getElementById('streak');
+    streakElement.textContent = `Current Streak: ${streaks.currentStreak} days | Longest Streak: ${streaks.longestStreak} days`;
+}
 
-    const maxValue = Math.max(...data.map(entry => entry[metric]));
+function updateGoalProgress() {
+    const today = dailyData[dailyData.length - 1];
+    const goalProgressElement = document.getElementById('goal-progress');
+    goalProgressElement.innerHTML = '';
 
-    data.forEach(entry => {
-        const bar = document.createElement('div');
-        bar.className = 'chart-bar';
-        bar.style.width = `${(entry[metric] / maxValue) * 100}%`;
-        bar.textContent = entry[metric];
-        chartDiv.appendChild(bar);
-    });
+    for (const [metric, goal] of Object.entries(goals)) {
+        const progress = (today[metric] / goal) * 100;
+        const progressBar = document.createElement('div');
+        progressBar.className = 'progress-bar';
+        progressBar.innerHTML = `
+            <div class="progress" style="width: ${progress}%"></div>
+            <span>${metric}: ${today[metric]} / ${goal} (${progress.toFixed(1)}%)</span>
+        `;
+        goalProgressElement.appendChild(progressBar);
+    }
+}
 
-    if (['steps', 'calories', 'water', 'sleep'].includes(metric)) {
-        const goalProgress = document.createElement('div');
-        goalProgress.className = 'goal-progress';
-        const average = data.reduce((sum, entry) => sum + entry[metric], 0) / data.length;
-        const percentOfGoal = (average / goals[metric] * 100).toFixed(2);
-        goalProgress.textContent = `${percentOfGoal}% of daily goal`;
-        goalProgress.classList.toggle('not-met', average < goals[metric]);
-        chartDiv.appendChild(goalProgress);
+function generateRecommendations() {
+    const recommendations = [];
+    const latestEntry = dailyData[dailyData.length - 1];
+
+    if (latestEntry.steps < goals.steps) {
+        recommendations.push(`Try to increase your daily steps. A short walk after dinner can help.`);
+    }
+    if (latestEntry.sleep < goals.sleep) {
+        recommendations.push(`Aim for ${goals.sleep} hours of sleep. Consider setting a consistent bedtime routine.`);
+    }
+    if (latestEntry.water < goals.water) {
+        recommendations.push(`Increase your water intake. Set reminders throughout the day.`);
+    }
+    if (latestEntry.mood < 7) {
+        recommendations.push(`Your mood seems low. Consider engaging in activities you enjoy or talking to a friend.`);
     }
 
-    return chartDiv;
+    return recommendations;
 }
 
-function createCorrelationChart() {
-    const ctx = document.getElementById('correlation-chart').getContext('2d');
-    const moodData = dailyData.map(entry => entry.mood);
-    const sleepData = dailyData.map(entry => entry.sleep);
+function showNotification(message, type) {
+    const notification = document.getElementById('notification');
+    notification.className = `notification ${type}`;
+    notification.textContent = message;
+    setTimeout(() => notification.textContent = '', 5000);
+}
 
-    new Chart(ctx, {
-        type: 'scatter',
-        data: {
-            datasets: [{
-                label: 'Mood vs Sleep',
-                data: dailyData.map(entry => ({x: entry.sleep, y: entry.mood})),
-                backgroundColor: 'rgba(75, 192, 192, 0.6)'
-            }]
-        },
-        options: {
-            scales: {
-                x: {
-                    title: {
-                        display: true,
-                        text: 'Sleep (hours)'
-                    }
-                },
-                y: {
-                    title: {
-                        display: true,
-                        text: 'Mood (1-10)'
-                    }
-                }
-            }
-        }
-    });
+async function fetchWeatherData() {
+    try {
+        const response = await fetch('https://api.openweathermap.org/data/2.5/weather?q=${city}&units=metric&appid=${apiKey}');
+        const data = await response.json();
+        weatherData = data;
+    } catch (error) {
+        console.error('Error fetching weather data:', error);
+    }
+}
+
+async function initializePredictionModel() {
+    try {
+        predictionModel = await tf.loadLayersModel('path/to/model.json');
+    } catch (error) {
+        console.error('Error initializing prediction model:', error);
+    }
+}
+
+async function makePredictions() {
+    if (!predictionModel) return;
+
+    try {
+        const recentEntries = dailyData.slice(-10);
+        const input = tf.tensor2d(recentEntries.map(entry => [entry.steps, entry.calories, entry.water, entry.sleep, entry.weight, entry.mood]));
+        const predictions = predictionModel.predict(input);
+        
+        console.log(predictions);
+    } catch (error) {
+        console.error('Error making predictions:', error);
+    }
+}
+
+function updateCharts() {
+    updateWeeklyChart();
+    updateMonthlyChart();
 }
 
 function updateWeeklyChart() {
-    const ctx = document.getElementById('weekly-chart').getContext('2d');
+    const weeklyLabels = weeklyData.map(entry => entry.date.toDateString());
+    const weeklyStepsData = weeklyData.map(entry => entry.steps);
+    const weeklyCaloriesData = weeklyData.map(entry => entry.calories);
+
+    createLineChart('weekly-chart', weeklyLabels, ['Steps', 'Calories'], [weeklyStepsData, weeklyCaloriesData]);
+}
+
+function updateMonthlyChart() {
+    const monthlyLabels = monthlyData.map(entry => entry.date.toDateString());
+    const monthlyStepsData = monthlyData.map(entry => entry.steps);
+    const monthlyCaloriesData = monthlyData.map(entry => entry.calories);
+
+    createLineChart('monthly-chart', monthlyLabels, ['Steps', 'Calories'], [monthlyStepsData, monthlyCaloriesData]);
+}
+
+function createLineChart(canvasId, labels, datasetsLabels, datasetsData) {
+    const ctx = document.getElementById(canvasId).getContext('2d');
     new Chart(ctx, {
-        type: 'bar',
+        type: 'line',
         data: {
-            labels: weeklyData.map(entry => entry.date.toLocaleDateString()),
-            datasets: [{
-                label: 'Steps',
-                data: weeklyData.map(entry => entry.steps),
-                backgroundColor: 'rgba(75, 192, 192, 0.6)',
-                borderColor: 'rgba(75, 192, 192, 1)',
-                borderWidth: 1
-            }]
-        },
-        options: {
-            scales: {
-                y: {
-                    beginAtZero: true
-                }
-            }
+            labels,
+            datasets: datasetsLabels.map((label, index) => ({
+                label,
+                data: datasetsData[index],
+                borderColor: getRandomColor(),
+                fill: false
+            }))
         }
     });
 }
 
-function updateMonthlyChart() {
-    const ctx = document.getElementById('monthly-chart').getContext('2d');
-    new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: monthlyData.map(entry => entry.date.toLocaleDateString()),
-            datasets: [{
-                label: 'Calories Burned',
-                data: monthlyData.map(entry => entry.calories),
-                backgroundColor: 'rgba(153, 102, 255, 0.6)',
-                borderColor: 'rgba(153, 102, 255, 1)',
-                borderWidth: 1
-            }]
-        },
-        options: {
-            scales: {
-                y: {
-                    beginAtZero: true
-                }
-            }
-        }
+function getRandomColor() {
+    const letters = '0123456789ABCDEF';
+    let color = '#';
+    for (let i = 0; i < 6; i++) {
+        color += letters[Math.floor(Math.random() * 16)];
+    }
+    return color;
+}
+
+function updateSocialFeatures() {
+    displayFriendLeaderboard();
+    displayChallenges();
+}
+
+function displayFriendLeaderboard() {
+    const leaderboard = document.getElementById('friend-leaderboard');
+    leaderboard.innerHTML = '';
+
+    friends.forEach(friend => {
+        const friendEntry = document.createElement('div');
+        friendEntry.textContent = `${friend.name}: ${friend.steps} steps`;
+        leaderboard.appendChild(friendEntry);
+    });
+}
+
+function displayChallenges() {
+    const challengesElement = document.getElementById('challenges');
+    challengesElement.innerHTML = '';
+
+    challenges.forEach(challenge => {
+        const challengeEntry = document.createElement('div');
+        challengeEntry.textContent = `${challenge.name}: ${challenge.description}`;
+        challengesElement.appendChild(challengeEntry);
+    });
+}
+
+function updateRewards() {
+    const rewardsElement = document.getElementById('rewards');
+    rewardsElement.innerHTML = '';
+
+    rewards.forEach(reward => {
+        const rewardEntry = document.createElement('div');
+        rewardEntry.textContent = `${reward.name}: ${reward.description}`;
+        rewardsElement.appendChild(rewardEntry);
     });
 }
 
 function calculateStreaks() {
     let currentStreak = 0;
     let longestStreak = 0;
-    let previousDate = null;
 
-    dailyData.forEach(entry => {
-        if (previousDate) {
-            const diff = (entry.date - previousDate) / (1000 * 60 * 60 * 24);
-            if (diff === 1) {
-                currentStreak++;
-                if (currentStreak > longestStreak) {
-                    longestStreak = currentStreak;
-                }
-            } else {
-                currentStreak = 1;
-            }
+    dailyData.forEach((entry, index) => {
+        if (index === 0 || entry.date - dailyData[index - 1].date <= 24 * 60 * 60 * 1000) {
+            currentStreak++;
         } else {
             currentStreak = 1;
         }
-        previousDate = entry.date;
+        longestStreak = Math.max(longestStreak, currentStreak);
     });
 
     return { currentStreak, longestStreak };
 }
 
-function updateGoals() {
-    goals.steps = parseInt(document.getElementById('goal-steps').value);
-    goals.calories = parseInt(document.getElementById('goal-calories').value);
-    goals.water = parseInt(document.getElementById('goal-water').value);
-    goals.sleep = parseInt(document.getElementById('goal-sleep').value);
-    saveData();
-    updateCharts();
-}
+document.addEventListener('DOMContentLoaded', () => {
+    loadData();
 
-function updateRewards() {
-    rewards = [];
-
-    const totalSteps = dailyData.reduce((sum, entry) => sum + entry.steps, 0);
-    const totalCalories = dailyData.reduce((sum, entry) => sum + entry.calories, 0);
-    const totalWater = dailyData.reduce((sum, entry) => sum + entry.water, 0);
-    const totalSleep = dailyData.reduce((sum, entry) => sum + entry.sleep, 0);
-
-    if (totalSteps >= 70000) {
-        rewards.push('Free Movie Ticket');
-    }
-    if (totalCalories >= 3500) {
-        rewards.push('Free Dessert');
-    }
-    if (totalWater >= 56) {
-        rewards.push('Spa Day');
-    }
-    if (totalSleep >= 56) {
-        rewards.push('New Book');
-    }
-
-    const rewardsContainer = document.getElementById('rewards');
-    rewardsContainer.innerHTML = '';
-    rewards.forEach(reward => {
-        const rewardDiv = document.createElement('div');
-        rewardDiv.className = 'reward';
-        rewardDiv.textContent = reward;
-        rewardsContainer.appendChild(rewardDiv);
-    });
-
-    saveData();
-}
-
-async function fetchWeatherData() {
-    try {
-        const response = await fetch('ttps://api.openweathermap.org/data/2.5/weather?q=${city}&units=metric&appid=${apiKey}');
-        const data = await response.json();
-        weatherData = data.current;
-    } catch (error) {
-        console.error('Error fetching weather data:', error);
-    }
-}
-
-document.getElementById('track-button').addEventListener('click', trackDaily);
-document.getElementById('update-goals-button').addEventListener('click', updateGoals);
-
-loadData();
+    document.getElementById('track-button').addEventListener('click', trackDaily);
+});
